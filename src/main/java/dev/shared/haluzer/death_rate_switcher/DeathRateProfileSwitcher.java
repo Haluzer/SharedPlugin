@@ -33,13 +33,14 @@ public class DeathRateProfileSwitcher implements Behavior, Configurable<DeathRat
     private Config config = new Config();
 
     private final Deque<Instant> recentDeaths = new ArrayDeque<>();
-    private boolean wasDestroyed = false;
+    private boolean wasDestroyed;
 
     private Instant revertAt = null;
 
     public DeathRateProfileSwitcher(ConfigAPI configAPI, RepairAPI repair) {
         this.configAPI = configAPI;
         this.repair = repair;
+        this.wasDestroyed = repair.isDestroyed();
     }
 
     @Configuration("death_rate_profile_switcher.config")
@@ -88,12 +89,18 @@ public class DeathRateProfileSwitcher implements Behavior, Configurable<DeathRat
     }
 
     private void process() {
-        if (config.FROM_PROFILE.isEmpty() || config.TO_PROFILE.isEmpty()) return;
+        if (config.FROM_PROFILE == null || config.FROM_PROFILE.isEmpty() ||
+                config.TO_PROFILE == null || config.TO_PROFILE.isEmpty()) return;
 
         trackDeathEdge();
         pruneOldDeaths();
 
         String current = configAPI.getCurrentProfile();
+
+        if (revertAt == null && config.TO_PROFILE.equals(current)) {
+            revertAt = Instant.now().plus(WINDOW);
+            recentDeaths.clear();
+        }
 
         if (revertAt == null) {
             if (config.FROM_PROFILE.equals(current) && recentDeaths.size() >= config.DEATHS_PER_HOUR_THRESHOLD) {
@@ -104,6 +111,12 @@ public class DeathRateProfileSwitcher implements Behavior, Configurable<DeathRat
                 recentDeaths.clear();
             }
         } else {
+            if (!config.TO_PROFILE.equals(current)) {
+                revertAt = null;
+                recentDeaths.clear();
+                return;
+            }
+
             if (recentDeaths.size() >= config.DEATHS_PER_HOUR_THRESHOLD) {
                 log("Deaths/hour reached " + recentDeaths.size() + " again while on '" + config.TO_PROFILE +
                         "'. Being hunted there too - reverting to '" + config.FROM_PROFILE + "' immediately.");
